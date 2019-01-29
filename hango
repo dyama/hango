@@ -1,0 +1,123 @@
+#!/usr/bin/env ruby
+# coding: utf-8
+
+require 'rubygems'
+require 'bundler'
+require 'bundler/setup'
+
+require 'optparse'
+require 'fileutils'
+require 'zip'
+require 'mozjpeg'
+require 'rmagick'
+
+$o = ARGV.getopts(
+  'vq:gw:h:',
+  'ext:jpg,jpeg,jiff,png,gif,bmp,tif,tiff',
+  'tmpdir:/tmp',
+  'version')
+
+show_version = $o['v']
+quality = ($o['q'] || 60).to_i
+grayscale = $o['o']
+w = $o['w'].to_i
+h = $o['h'].to_i
+overwrite = $o['o']
+
+$exts = %w(jpeg jpg jpe jfi jfif jp2 j2c gif png bmp tiff tif tga tpic webp bmp pic pict pct psd psb pdd pdf svg svgz)
+$exts << $exts.map(&:upcase)
+$exts.flatten!
+
+# $o['ext'] = $o['ext'].split(/,/)
+
+tmpdir = "/tmp/hango-#{$$}"
+extdir = File.join(tmpdir, '1')
+resdir = File.join(tmpdir, '2')
+outdir = File.join(tmpdir, '3')
+
+$o['g'] = false
+$o['h'] = 512
+$o['w'] = 0
+
+ARGV.each do |afile|
+
+  FileUtils.rm_r(tmpdir) if Dir.exist?(tmpdir)
+  FileUtils.mkdir_p(extdir)
+  FileUtils.mkdir_p(resdir)
+  FileUtils.mkdir_p(outdir)
+
+  imgfiles = []
+  begin
+    Zip::InputStream.open(afile, 0) do |stream|
+      while (ent = stream.get_next_entry)
+        ext = File.extname(ent.name)
+        if $exts.any? {|x| ".#{x}" == ext }
+          destfile = File.join(extdir, ent.name)
+          File.write(destfile, stream.read)
+          imgfiles << destfile
+        end
+      end
+    end
+  rescue
+    next
+  end
+
+  imgfiles.sort.each_with_index do |file, i|
+
+    filename = '%05d.jpg' % i
+    tmp = File.join(resdir, filename)
+    dest = File.join(outdir, filename) 
+
+    begin
+      if w > 0 || h > 0 || $o['g']
+        img = Magick::Image.read(file).first
+        if $o['w'].to_i > 0 && $o['h'].to_i > 0
+          img = img.resize($o['w'].to_i, $o['h'].to_i)
+        elsif $o['w'].to_i > 0
+          f = $o['w'].to_f / img.columns
+          img = img.resize($o['w'].to_i, (img.rows * f).to_i)
+        elsif $o['h'].to_i > 0
+          f = $o['h'].to_f / img.rows
+          img = img.resize((img.columns * f).to_i, $o['h'].to_i)
+        end
+        if $o['g']
+          img = img.quantize(256, Magick::GRAYColorspace)
+        end
+        img.format = 'JPEG'
+        img.write(tmp) {
+          self.quality = 100
+        }
+        img.destroy!
+      else
+        tmp = file
+      end
+
+      if Mozjpeg.supported?
+        of = File.open(dest, 'w')
+        Mozjpeg.compress(
+          File.new(tmp),
+          of,
+          arguments: "-quality #{$o['q'] || 60} -quant-table 2 -notrellis")
+        of.close
+      else
+        FileUtils.copy(tmp, dest)
+      end
+    rescue
+        FileUtils.copy(file, dest)
+    end
+
+  end
+
+  xfile = File.join("#{tmpdir}", 'result.cbz')
+  Zip::File.open(xfile, Zip::File::CREATE) do |z|
+    Dir.glob("#{outdir}/*.*").each do |yfile|
+      z.add(File.basename(yfile), yfile)
+    end
+  end
+
+  dfile = File.basename(afile, File.extname(afile))
+  FileUtils.move(xfile, File.join(File.dirname(afile), "#{dfile}_opt.cbz"))
+end
+
+FileUtils.rm_r(tmpdir) if Dir.exist?(tmpdir)
+
