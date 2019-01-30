@@ -19,7 +19,7 @@ $o = ARGV.getopts(
 
 show_version = $o['v']
 quality = ($o['q'] || 60).to_i
-grayscale = $o['o']
+grayscale = $o['g']
 w = $o['w'].to_i
 h = $o['h'].to_i
 overwrite = $o['o']
@@ -35,10 +35,6 @@ extdir = File.join(tmpdir, '1')
 resdir = File.join(tmpdir, '2')
 outdir = File.join(tmpdir, '3')
 
-$o['g'] = false
-$o['h'] = 512
-$o['w'] = 0
-
 ARGV.each do |afile|
 
   FileUtils.rm_r(tmpdir) if Dir.exist?(tmpdir)
@@ -48,13 +44,16 @@ ARGV.each do |afile|
 
   imgfiles = []
   begin
+    print "Extract:"
     Zip::InputStream.open(afile, 0) do |stream|
       while (ent = stream.get_next_entry)
         ext = File.extname(ent.name)
         if $exts.any? {|x| ".#{x}" == ext }
           destfile = File.join(extdir, ent.name)
+          destfile = destfile.encode('UTF-8', 'Shift_JIS')
           File.write(destfile, stream.read)
           imgfiles << destfile
+          print "."
         end
       end
     end
@@ -62,25 +61,30 @@ ARGV.each do |afile|
     next
   end
 
-  imgfiles.sort.each_with_index do |file, i|
+  # imgfiles = imgfiles.sort_by(&:to_i)
+  imgfiles.sort!
+
+  puts ""
+  print "Convert:"
+  imgfiles.each_with_index do |file, i|
 
     filename = '%05d.jpg' % i
     tmp = File.join(resdir, filename)
     dest = File.join(outdir, filename) 
 
-    begin
-      if w > 0 || h > 0 || $o['g']
+    #begin
+      if w > 0 || h > 0 || grayscale
         img = Magick::Image.read(file).first
-        if $o['w'].to_i > 0 && $o['h'].to_i > 0
-          img = img.resize($o['w'].to_i, $o['h'].to_i)
-        elsif $o['w'].to_i > 0
-          f = $o['w'].to_f / img.columns
-          img = img.resize($o['w'].to_i, (img.rows * f).to_i)
-        elsif $o['h'].to_i > 0
-          f = $o['h'].to_f / img.rows
-          img = img.resize((img.columns * f).to_i, $o['h'].to_i)
+        if w > 0 && h > 0
+          img = img.resize(w, h)
+        elsif w > 0
+          f = w.to_f / img.columns
+          img = img.resize(w, (img.rows * f).to_i)
+        elsif h > 0
+          f = h.to_f / img.rows
+          img = img.resize((img.columns * f).to_i, h)
         end
-        if $o['g']
+        if grayscale
           img = img.quantize(256, Magick::GRAYColorspace)
         end
         img.format = 'JPEG'
@@ -102,21 +106,29 @@ ARGV.each do |afile|
       else
         FileUtils.copy(tmp, dest)
       end
-    rescue
-        FileUtils.copy(file, dest)
-    end
+    #rescue
+    #  puts "error"
+    #    FileUtils.copy(file, dest)
+    #end
 
+    print "."
   end
+
+  puts ""
+  print "Compress:"
 
   xfile = File.join("#{tmpdir}", 'result.cbz')
   Zip::File.open(xfile, Zip::File::CREATE) do |z|
     Dir.glob("#{outdir}/*.*").each do |yfile|
       z.add(File.basename(yfile), yfile)
+      print "."
     end
   end
 
   dfile = File.basename(afile, File.extname(afile))
   FileUtils.move(xfile, File.join(File.dirname(afile), "#{dfile}_opt.cbz"))
+
+  puts ""
 end
 
 FileUtils.rm_r(tmpdir) if Dir.exist?(tmpdir)
