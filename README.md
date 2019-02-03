@@ -1,5 +1,6 @@
 # hango
-Let's Hango!
+
+**hango** is optimizer for comic book archive file (CBZ).
 
 ## Example files
 

@@ -43,23 +43,26 @@ ARGV.each do |afile|
   FileUtils.mkdir_p(outdir)
 
   imgfiles = []
-  begin
+  #begin
     print "Extract:"
     Zip::InputStream.open(afile, 0) do |stream|
       while (ent = stream.get_next_entry)
         ext = File.extname(ent.name)
         if $exts.any? {|x| ".#{x}" == ext }
+          
+          ent.name.encode!('UTF-8', 'CP932', :undef=>:replace, :invalid=>:replace, :replace => '_')
+          ent.name.gsub!('/', '_')
+          
           destfile = File.join(extdir, ent.name)
-          destfile = destfile.encode('UTF-8', 'Shift_JIS')
           File.write(destfile, stream.read)
           imgfiles << destfile
           print "."
         end
       end
     end
-  rescue
-    next
-  end
+  #rescue
+  #  next
+  #end
 
   # imgfiles = imgfiles.sort_by(&:to_i)
   imgfiles.sort!
@@ -92,6 +95,7 @@ ARGV.each do |afile|
           self.quality = 100
         }
         img.destroy!
+        img = nil
       else
         tmp = file
       end
