@@ -10,9 +10,10 @@ require 'fileutils'
 require 'zip'
 require 'mozjpeg'
 require 'rmagick'
+require 'parallel'
 
 $o = ARGV.getopts(
-  'vq:gw:h:',
+  'vq:gw:h:s:l:p:',
   'ext:jpg,jpeg,jiff,png,gif,bmp,tif,tiff',
   'tmpdir:/tmp',
   'version')
@@ -22,6 +23,9 @@ quality = ($o['q'] || 60).to_i
 grayscale = $o['g']
 w = $o['w'].to_i
 h = $o['h'].to_i
+s = $o['s'].to_i
+l = $o['l'].to_i
+pr_size = ($o['p'] || 8).to_i
 overwrite = $o['o']
 
 $exts = %w(jpeg jpg jpe jfi jfif jp2 j2c gif png bmp tiff tif tga tpic webp bmp pic pict pct psd psb pdd pdf svg svgz)
@@ -42,43 +46,72 @@ ARGV.each do |afile|
   FileUtils.mkdir_p(resdir)
   FileUtils.mkdir_p(outdir)
 
-  imgfiles = []
-  #begin
-    print "Extract:"
-    Zip::InputStream.open(afile, 0) do |stream|
-      while (ent = stream.get_next_entry)
-        ext = File.extname(ent.name)
-        if $exts.any? {|x| ".#{x}" == ext }
-          
-          ent.name.encode!('UTF-8', 'CP932', :undef=>:replace, :invalid=>:replace, :replace => '_')
-          ent.name.gsub!('/', '_')
-          
-          destfile = File.join(extdir, ent.name)
-          File.write(destfile, stream.read)
-          imgfiles << destfile
-          print "."
+  begin
+
+    puts "#{afile}"
+
+    imgfiles = []
+    #begin
+      print "Extract:"
+      Zip::InputStream.open(afile, 0) do |stream|
+        while (ent = stream.get_next_entry)
+          ext = File.extname(ent.name)
+          if $exts.any? {|x| ".#{x}" == ext }
+            
+            ent.name.encode!('UTF-8', 'CP932', :undef=>:replace, :invalid=>:replace, :replace => '_')
+            ent.name.gsub!('/', '_')
+            
+            destfile = File.join(extdir, ent.name)
+            File.write(destfile, stream.read)
+            imgfiles << destfile
+            print "."
+          end
         end
       end
-    end
-  #rescue
-  #  next
-  #end
+    #rescue
+    #  next
+    #end
 
-  # imgfiles = imgfiles.sort_by(&:to_i)
-  imgfiles.sort!
+    # imgfiles = imgfiles.sort_by(&:to_i)
+    imgfiles.sort!
 
-  puts ""
-  print "Convert:"
-  imgfiles.each_with_index do |file, i|
+    puts ""
+    print "Convert:"
+    imgfiless = [(0..imgfiles.size-1).to_a, imgfiles].transpose
+    Parallel.each(imgfiless, in_processes: pr_size) do |item|
 
-    filename = '%05d.jpg' % i
-    tmp = File.join(resdir, filename)
-    dest = File.join(outdir, filename) 
+      i = item.first
+      file = item.last
 
-    #begin
-      if w > 0 || h > 0 || grayscale
+      filename = '%05d.jpg' % i
+      tmp = File.join(resdir, filename)
+      dest = File.join(outdir, filename) 
+
+      if w > 0 || h > 0 || s > 0 || l > 0 || grayscale
         img = Magick::Image.read(file).first
-        if w > 0 && h > 0
+        def img.aspect; self.columns / self.rows end
+        def img.landscape?; self.aspect > 1.0 end
+        def img.square?; self.aspect == 1.0 end
+        def img.portrait?; !self.landscape? and !self.square? end
+        if s > 0
+          # 短い辺を指定してリサイズ
+          if img.landscape?
+            f = s.to_f / img.rows
+            img = img.resize((img.columns * f).to_i, s)
+          else
+            f = s.to_f / img.columns
+            img = img.resize(s, (img.rows * f).to_i)
+          end
+        elsif l > 0
+          # 長い辺を指定してリサイズ
+          if img.portrait?
+            f = l.to_f / img.rows
+            img = img.resize((img.columns * f).to_i, l)
+          else
+            f = l.to_f / img.columns
+            img = img.resize(l, (img.rows * f).to_i)
+          end
+        elsif w > 0 && h > 0
           img = img.resize(w, h)
         elsif w > 0
           f = w.to_f / img.columns
@@ -110,30 +143,30 @@ ARGV.each do |afile|
       else
         FileUtils.copy(tmp, dest)
       end
-    #rescue
-    #  puts "error"
-    #    FileUtils.copy(file, dest)
-    #end
 
-    print "."
-  end
-
-  puts ""
-  print "Compress:"
-
-  xfile = File.join("#{tmpdir}", 'result.cbz')
-  Zip::File.open(xfile, Zip::File::CREATE) do |z|
-    Dir.glob("#{outdir}/*.*").each do |yfile|
-      z.add(File.basename(yfile), yfile)
       print "."
     end
+
+    puts ""
+    print "Compress:"
+
+    xfile = File.join("#{tmpdir}", 'result.cbz')
+    Zip::File.open(xfile, Zip::File::CREATE) do |z|
+      Dir.glob("#{outdir}/*.*").each do |yfile|
+        z.add(File.basename(yfile), yfile)
+        print "."
+      end
+    end
+
+    dfile = File.basename(afile, File.extname(afile))
+    FileUtils.move(xfile, File.join(File.dirname(afile), "#{dfile}_opt.cbz"))
+
+    puts ""
+
+  rescue
+    puts "Error"
+  #    FileUtils.copy(file, dest)
   end
-
-  dfile = File.basename(afile, File.extname(afile))
-  FileUtils.move(xfile, File.join(File.dirname(afile), "#{dfile}_opt.cbz"))
-
-  puts ""
 end
 
 FileUtils.rm_r(tmpdir) if Dir.exist?(tmpdir)
-

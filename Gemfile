@@ -7,3 +7,5 @@ git_source(:github) {|repo_name| "https://github.com/#{repo_name}" }
 gem "rubyzip"
 gem 'rmagick', '~> 2.15', '>= 2.15.4'
 gem "mozjpeg"
+gem 'parallel'
+
